@@ -8,8 +8,11 @@ export type {
 
 export type {
   ArrayDiffFunc,
+  ArrayIdentitySelector,
   DifferOptions,
   DiffResult,
+  IdentityDiagnostic,
+  IdentityMatchInfo,
 } from './differ';
 
 export type {

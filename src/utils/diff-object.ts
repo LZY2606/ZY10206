@@ -2,6 +2,7 @@ import type { DifferOptions, DiffResult, ArrayDiffFunc } from '../differ';
 import cmp from './cmp';
 import concat from './concat';
 import getType from './get-type';
+import { joinPath } from './identity-selector';
 import prettyAppendLines from './pretty-append-lines';
 import sortKeys from './sort-keys';
 import stringify from './stringify';
@@ -12,6 +13,7 @@ const diffObject = (
   level = 1,
   options: DifferOptions,
   arrayDiffFunc: ArrayDiffFunc,
+  path: string = '',
 ): [DiffResult[], DiffResult[]] => {
   if (level > (options.maxDepth || Infinity)) {
     return [
@@ -101,7 +103,8 @@ const diffObject = (
       } else if (Array.isArray(lhs[keyLeft])) {
         const arrLeft = [...lhs[keyLeft]];
         const arrRight = [...rhs[keyRight]];
-        const [resLeft, resRight] = arrayDiffFunc(arrLeft, arrRight, keyLeft, keyRight, level, options, [], []);
+        const childPath = joinPath(path, keyLeft);
+        const [resLeft, resRight] = arrayDiffFunc(arrLeft, arrRight, keyLeft, keyRight, level, options, [], [], childPath);
         linesLeft = concat(linesLeft, resLeft);
         linesRight = concat(linesRight, resRight);
       } else if (lhs[keyLeft] === null) {
@@ -114,6 +117,7 @@ const diffObject = (
           level + 1,
           options,
           arrayDiffFunc,
+          joinPath(path, keyLeft),
         );
         linesLeft.push({ level, type: 'equal', text: `"${keyLeft}": {` });
         linesLeft = concat(linesLeft, result[0]);

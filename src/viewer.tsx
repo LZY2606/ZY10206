@@ -73,6 +73,8 @@ export interface ViewerProps {
     add?: string;
     remove?: string;
     modify?: string;
+    /** Background colour for lines of a pure move (moved but not modified). */
+    move?: string;
   };
   /** Display line numbers, default is `false`. */
   lineNumbers?: boolean;
@@ -142,8 +144,8 @@ const Viewer: React.FC<ViewerProps> = props => {
   const jsonsAreEqual = React.useMemo(() => {
     return (
       linesLeft.length === linesRight.length &&
-      linesLeft.every(item => item.type === 'equal') &&
-      linesRight.every(item => item.type === 'equal')
+      linesLeft.every(item => item.type === 'equal' && !item.identity?.moved) &&
+      linesRight.every(item => item.type === 'equal' && !item.identity?.moved)
     );
   }, [linesLeft, linesRight]);
 
@@ -164,8 +166,8 @@ const Viewer: React.FC<ViewerProps> = props => {
     expandLineHeight = 26,
   } = !props.virtual || props.virtual === true ? {} : props.virtual;
   const scrollContainer = _scrollContainer === 'body'
-    ? document.body
-    : document.querySelector(_scrollContainer);
+    ? (typeof document === 'undefined' ? null : document.body)
+    : (typeof document === 'undefined' ? null : document.querySelector(_scrollContainer));
   const totalColumns = props.lineNumbers ? 4 : 2;
 
   // Use these refs to keep the diff data and segments sync,
@@ -311,6 +313,25 @@ const Viewer: React.FC<ViewerProps> = props => {
     const l = linesLeftRef.current[index];
     const r = linesRightRef.current[index];
 
+    // A pure move (moved but not modified) is rendered differently from an edit:
+    // it gets the `line-moved` class and the `move` background colour, while a
+    // move+modify keeps its `modify`/`add`/`remove` styling.
+    const getLineProps = (line: DiffResult) => {
+      const isPureMove = line.identity?.moved && !line.identity?.modified;
+      const className = [
+        `line-${line.type}`,
+        line.identity?.moved ? 'line-moved' : '',
+      ].filter(Boolean).join(' ');
+      const backgroundColor = isPureMove
+        ? props.bgColour?.move ?? ''
+        : line.type !== 'equal'
+          ? props.bgColour?.[line.type] ?? ''
+          : '';
+      return { className, backgroundColor };
+    };
+    const lProps = getLineProps(l);
+    const rProps = getLineProps(r);
+
     const [lDiff, rDiff] = props.highlightInlineDiff && l.type === 'modify' && r.type === 'modify'
       ? getInlineDiff(l.text, r.text, inlineDiffOptions)
       : [[], []];
@@ -319,23 +340,20 @@ const Viewer: React.FC<ViewerProps> = props => {
     const lResult = mergeSegments(lTokens, lDiff);
     const rResult = mergeSegments(rTokens, rDiff);
 
-    const bgLeft = l.type !== 'equal' ? props.bgColour?.[l.type] ?? '' : '';
-    const bgRight = r.type !== 'equal' ? props.bgColour?.[r.type] ?? '' : '';
-
     return (
       // eslint-disable-next-line react/no-array-index-key
       <tr key={index}>
         {
           props.lineNumbers && (
             <td
-              className={`line-${l.type} line-number`}
-              style={{ backgroundColor: bgLeft }}
+              className={`${lProps.className} line-number`}
+              style={{ backgroundColor: lProps.backgroundColor }}
             >
               {l.lineNumber}
             </td>
           )
         }
-        <td className={`line-${l.type}`} style={{ backgroundColor: bgLeft }}>
+        <td className={lProps.className} style={{ backgroundColor: lProps.backgroundColor }}>
           <pre>
             {l.text && indentChar.repeat(l.level * indentSize)}
             {renderInlineResult(l.text, lResult, l.comma, syntaxHighlightEnabled)}
@@ -344,14 +362,14 @@ const Viewer: React.FC<ViewerProps> = props => {
         {
           props.lineNumbers && (
             <td
-              className={`line-${r.type} line-number`}
-              style={{ backgroundColor: bgRight }}
+              className={`${rProps.className} line-number`}
+              style={{ backgroundColor: rProps.backgroundColor }}
             >
               {r.lineNumber}
             </td>
           )
         }
-        <td className={`line-${r.type}`} style={{ backgroundColor: bgRight }}>
+        <td className={rProps.className} style={{ backgroundColor: rProps.backgroundColor }}>
           <pre>
             {r.text && indentChar.repeat(r.level * indentSize)}
             {renderInlineResult(r.text, rResult, r.comma, syntaxHighlightEnabled)}

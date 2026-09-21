@@ -22,9 +22,13 @@ const getSegments = (l: DiffResult[], r: DiffResult[], options: HideUnchangedLin
     return [{ start: 0, end: l.length, isEqual: false }];
   }
 
+  // Lines of a moved (but otherwise unchanged) element are not "unchanged":
+  // they must stay visible so pure moves are not folded away.
+  const isUnchangedLine = (line: DiffResult) => line.type === 'equal' && !line.identity?.moved;
+
   const segments: SegmentItem[] = [];
   for (let i = 0; i < l.length; i++) {
-    if (l[i].type === 'equal' && r[i].type === 'equal') {
+    if (isUnchangedLine(l[i]) && isUnchangedLine(r[i])) {
       if (segments.length && segments[segments.length - 1].isEqual) {
         segments[segments.length - 1].end++;
       } else {

@@ -9,7 +9,9 @@ import prettyAppendLines from './pretty-append-lines';
 import cmp from './cmp';
 import { addArrayClosingBrackets, addArrayOpeningBrackets, addMaxDepthPlaceholder } from './array-bracket-utils';
 import diffArrayCompareKey, { allObjectsHaveCompareKey } from './diff-array-compare-key';
+import { getIdentityAwareArrayDiffFunc } from './diff-array-identity';
 import { diffObjectWithArraySupport } from './diff-object-with-array-support';
+import { joinPath } from './identity-selector';
 
 const diffArrayNormal = (
   arrLeft: any[],
@@ -20,9 +22,14 @@ const diffArrayNormal = (
   options: DifferOptions,
   linesLeft: DiffResult[] = [],
   linesRight: DiffResult[] = [],
+  path: string = '',
 ): [DiffResult[], DiffResult[]] => {
   arrLeft = [...arrLeft];
   arrRight = [...arrRight];
+  // When identity selectors are configured, nested arrays must be routed through
+  // the identity-aware dispatcher; otherwise keep the existing recursion.
+  const arrayRecurseFunc = getIdentityAwareArrayDiffFunc(options) ?? diffArrayNormal;
+  let indexLeft = 0;
   addArrayOpeningBrackets(linesLeft, linesRight, keyLeft, keyRight, level)
 
   if (level >= (options.maxDepth || Infinity)) {
@@ -70,7 +77,7 @@ const diffArrayNormal = (
               itemRight,
               level,
               options,
-              diffArrayNormal,
+              arrayRecurseFunc,
               diffArrayCompareKey,
               allObjectsHaveCompareKey
             );
@@ -80,7 +87,8 @@ const diffArrayNormal = (
               itemRight,
               level + 2,
               options,
-              diffArrayNormal
+              arrayRecurseFunc,
+              joinPath(path, String(indexLeft)),
             );
           }
           linesLeft = concat(linesLeft, objLeft);
@@ -98,7 +106,10 @@ const diffArrayNormal = (
             linesLeft = concat(linesLeft, resLeft);
             linesRight = concat(linesRight, resRight);
           } else {
-            const [resLeft, resRight] = diffArrayNormal(itemLeft, itemRight, '', '', level + 1, options, [], []);
+            const [resLeft, resRight] = arrayRecurseFunc(
+              itemLeft, itemRight, '', '', level + 1, options, [], [],
+              joinPath(path, String(indexLeft)),
+            );
             linesLeft = concat(linesLeft, resLeft);
             linesRight = concat(linesRight, resRight);
           }
@@ -142,6 +153,7 @@ const diffArrayNormal = (
         }
         arrLeft.shift();
         arrRight.shift();
+        indexLeft++;
       } else if (arrLeft.length) {
         const removedLines = formatValue(itemLeft, undefined, true, options.undefinedBehavior).split('\n');
         for (let i = 0; i < removedLines.length; i++) {
@@ -153,6 +165,7 @@ const diffArrayNormal = (
           linesRight.push({ level: level + 1, type: 'equal', text: '' });
         }
         arrLeft.shift();
+        indexLeft++;
       } else if (arrRight.length) {
         const addedLines = formatValue(itemRight, undefined, true, options.undefinedBehavior).split('\n');
         for (let i = 0; i < addedLines.length; i++) {

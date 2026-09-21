@@ -7,6 +7,8 @@ import isEqual from './is-equal';
 import prettyAppendLines from './pretty-append-lines';
 import stringify from './stringify';
 import diffArrayNormal from './diff-array-normal';
+import { getIdentityAwareArrayDiffFunc } from './diff-array-identity';
+import { joinPath } from './identity-selector';
 import { addArrayClosingBrackets, addArrayOpeningBrackets, addMaxDepthPlaceholder } from './array-bracket-utils';
 
 // Recursively checks if all objects (including in nested arrays) have the compare key
@@ -38,10 +40,14 @@ function diffArrayRecursive(
   options: DifferOptions,
   linesLeft: DiffResult[] = [],
   linesRight: DiffResult[] = [],
+  path: string = '',
 ): [DiffResult[], DiffResult[]] {
+  // When identity selectors are configured, nested arrays must be routed through
+  // the identity-aware dispatcher; otherwise keep the existing recursion.
+  const arrayRecurseFunc = getIdentityAwareArrayDiffFunc(options) ?? diffArrayRecursive;
   if (!options.compareKey) {
     // Fallback to normal diff if no compare key is specified
-    return diffArrayNormal(arrLeft, arrRight, keyLeft, keyRight, level, options, linesLeft, linesRight);
+    return diffArrayNormal(arrLeft, arrRight, keyLeft, keyRight, level, options, linesLeft, linesRight, path);
   }
 
   // If arrays are not of objects, or not all objects have the compare key (including nested), fallback to unordered LCS diff
@@ -50,7 +56,7 @@ function diffArrayRecursive(
       !allObjectsHaveCompareKey(arrLeft, options.compareKey) ||
       !allObjectsHaveCompareKey(arrRight, options.compareKey)) {
     // Use unordered LCS for arrays of primitives, mixed types, or missing compare key
-    return diffArrayNormal(arrLeft, arrRight, keyLeft, keyRight, level, options, linesLeft, linesRight);
+    return diffArrayNormal(arrLeft, arrRight, keyLeft, keyRight, level, options, linesLeft, linesRight, path);
   }
 
   addArrayOpeningBrackets(linesLeft, linesRight, keyLeft, keyRight, level);
@@ -120,7 +126,8 @@ function diffArrayRecursive(
             const rVal = rightItem[key];
             if (Array.isArray(lVal) && Array.isArray(rVal)) {
               // Recursively diff arrays
-              const [arrL, arrR] = diffArrayRecursive(lVal, rVal, key, key, level + 2, options, [], []);
+              const childPath = joinPath(joinPath(path, String(i)), key);
+              const [arrL, arrR] = arrayRecurseFunc(lVal, rVal, key, key, level + 2, options, [], [], childPath);
               linesLeft = concat(linesLeft, arrL);
               linesRight = concat(linesRight, arrR);
             } else if (Array.isArray(lVal) || Array.isArray(rVal)) {
@@ -142,7 +149,8 @@ function diffArrayRecursive(
                 { [key]: rVal },
                 level + 2,
                 options,
-                diffArrayRecursive
+                arrayRecurseFunc,
+                joinPath(path, String(i)),
               );
               linesLeft = concat(linesLeft, leftLines);
               linesRight = concat(linesRight, rightLines);
@@ -152,7 +160,7 @@ function diffArrayRecursive(
           linesRight.push({ level: level + 1, type: 'equal', text: '}' });
         } else if (leftType === 'array') {
           // For nested arrays, recursively apply the same logic
-          const [resLeft, resRight] = diffArrayRecursive(leftItem, rightItem, '', '', level + 1, options, [], []);
+          const [resLeft, resRight] = arrayRecurseFunc(leftItem, rightItem, '', '', level + 1, options, [], [], joinPath(path, String(i)));
           linesLeft = concat(linesLeft, resLeft);
           linesRight = concat(linesRight, resRight);
         } else if (isEqual(leftItem, rightItem, options)) {

@@ -1,6 +1,7 @@
 import cleanFields from './utils/clean-fields';
 import concat from './utils/concat';
 import detectCircular from './utils/detect-circular';
+import diffArrayIdentity from './utils/diff-array-identity';
 import diffArrayLCS from './utils/diff-array-lcs';
 import diffArrayNormal from './utils/diff-array-normal';
 import diffArrayCompareKey from './utils/diff-array-compare-key';
@@ -142,6 +143,35 @@ export interface DifferOptions {
    */
   compareKey?: string;
   /**
+   * Optional identity selectors for arrays of objects. When the path of an array
+   * matches a selector, elements are matched by a stable identity (computed from
+   * the configured fields) instead of by position, so moves are detected and
+   * matched elements are diffed recursively against each other.
+   *
+   * Paths are JSON Pointer style: `''` (or `'/'`) is the root, segments are object
+   * keys, and `*` matches exactly one array index, e.g.:
+   *
+   * ```js
+   * const differ = new Differ({
+   *   arrayIdentitySelectors: [
+   *     { path: '/items', fields: ['id'] },
+   *     { path: '/items/*\/children', fields: ['name', 'version'] },
+   *   ],
+   * });
+   * ```
+   *
+   * When no selector is configured (or none matches an array), the output is
+   * identical to the previous behaviour.
+   */
+  arrayIdentitySelectors?: ArrayIdentitySelector[];
+  /**
+   * Called when an identity-related diagnostic is produced, e.g. when duplicate
+   * identities are found in the same array (in which case the differ falls back
+   * to the configured `arrayDiffMethod` for that array instead of silently
+   * overwriting earlier occurrences).
+   */
+  onIdentityDiagnostic?: (diagnostic: IdentityDiagnostic) => void;
+  /**
    * The behavior when encountering values that are not part of the JSON spec, e.g. `undefined`, `NaN`, `Infinity`, `123n`, `() => alert(1)`, `Symbol.iterator`.
    *
    * - `UndefinedBehavior.throw`: throw an error
@@ -151,6 +181,49 @@ export interface DifferOptions {
    * Default is `UndefinedBehavior.stringify`.
    */
   undefinedBehavior?: UndefinedBehavior;
+}
+
+export interface ArrayIdentitySelector {
+  /**
+   * JSON Pointer style path of the array this selector applies to.
+   * `''` or `'/'` means the root array; `*` matches exactly one array index.
+   */
+  path: string;
+  /**
+   * Fields composing the identity of each element. Each field is a JSON Pointer
+   * relative to the element (e.g. `'/meta/id'`); a bare word (e.g. `'id'`) is
+   * treated as a single key. Multiple fields form a composite identity.
+   */
+  fields: string[];
+}
+
+export interface IdentityDiagnostic {
+  type: 'ambiguous-identity';
+  /** Path of the array where the diagnostic was produced. */
+  path: string;
+  /** Path of the selector that was applied. */
+  selector: string;
+  /** The duplicated normalized identities. */
+  identities: string[];
+  message: string;
+}
+
+/**
+ * Metadata attached to lines that belong to an identity-matched array element.
+ */
+export interface IdentityMatchInfo {
+  /** The normalized identity that matched. */
+  identity: string;
+  /** The selector path that produced this match. */
+  selector: string;
+  /** Index of the element in the left (before) array. */
+  oldIndex: number;
+  /** Index of the element in the right (after) array. */
+  newIndex: number;
+  /** Whether the element changed its relative position. */
+  moved: boolean;
+  /** Whether the element content was modified. */
+  modified: boolean;
 }
 
 export enum UndefinedBehavior {
@@ -165,6 +238,12 @@ export interface DiffResult {
   text: string;
   comma?: boolean;
   lineNumber?: number;
+  /**
+   * Present when this line belongs to an array element matched by an
+   * `arrayIdentitySelectors` entry. Pure moves have `moved: true` and
+   * `modified: false`, so viewers can render them differently from edits.
+   */
+  identity?: IdentityMatchInfo;
 }
 
 export type ArrayDiffFunc = (
@@ -184,6 +263,8 @@ const EQUAL_RIGHT_BRACKET_LINE: DiffResult = { level: 0, type: 'equal', text: '}
 class Differ {
   private options: DifferOptions;
   private arrayDiffFunc: ArrayDiffFunc;
+  /** Diagnostics produced by identity matching during the last `diff` call. */
+  public identityDiagnostics: IdentityDiagnostic[] = [];
 
   constructor({
     detectCircular = true,
@@ -195,6 +276,8 @@ class Differ {
     recursiveEqual = false,
     preserveKeyOrder,
     compareKey,
+    arrayIdentitySelectors,
+    onIdentityDiagnostic,
     undefinedBehavior = UndefinedBehavior.stringify,
   }: DifferOptions = {}) {
     this.options = {
@@ -207,10 +290,17 @@ class Differ {
       recursiveEqual,
       preserveKeyOrder,
       compareKey,
+      arrayIdentitySelectors,
       undefinedBehavior,
     };
 
-    if (arrayDiffMethod === 'compare-key') {
+    if (arrayIdentitySelectors?.length) {
+      this.arrayDiffFunc = diffArrayIdentity;
+      this.options.onIdentityDiagnostic = diagnostic => {
+        this.identityDiagnostics.push(diagnostic);
+        onIdentityDiagnostic?.(diagnostic);
+      };
+    } else if (arrayDiffMethod === 'compare-key') {
       this.arrayDiffFunc = diffArrayCompareKey;
     } else if (arrayDiffMethod === 'lcs' || arrayDiffMethod === 'unorder-lcs') {
       this.arrayDiffFunc = diffArrayLCS;
@@ -288,6 +378,7 @@ class Differ {
   }
 
   diff(sourceLeft: any, sourceRight: any) {
+    this.identityDiagnostics = [];
     this.detectCircular(sourceLeft);
     this.detectCircular(sourceRight);
 

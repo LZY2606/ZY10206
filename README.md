@@ -110,6 +110,65 @@ Here is an experimental [Vue version](https://github.com/RexSkz/json-diff-kit-vu
 
 Please check the [playground page](https://json-diff-kit.js.org/), where you can adjust nearly all parameters and see the result.
 
+## Matching Array Items by Identity
+
+By default, arrays are diffed by position (`normal`) or by content (`lcs`), so
+reordered objects show up as remove + add. With `arrayIdentitySelectors` you can
+declare a stable identity for arrays of objects; elements with the same identity
+are matched first and diffed recursively against each other, so a move (with or
+without modifications) stays a single associated entity instead of a remove + add
+pair.
+
+```ts
+const differ = new Differ({
+  arrayDiffMethod: 'lcs', // used for unmatched elements and non-matching arrays
+  arrayIdentitySelectors: [
+    { path: '/items', fields: ['id'] },
+    { path: '/items/*/children', fields: ['name', 'version'] }, // composite identity
+  ],
+  onIdentityDiagnostic: d => console.warn(d.message),
+});
+```
+
+**Selector paths** are JSON Pointer style: `''` (or `'/'`) is the root array,
+segments are object keys (`~0`/`~1` escaping is supported), and `*` matches
+exactly one array index. Fields are JSON Pointers relative to the element; a bare
+word like `'id'` is a single key. Selectors only read existing fields — no user
+code is executed.
+
+**Identity normalization** is deterministic and type-tagged: missing fields,
+`null`, strings, numbers and booleans are all distinct (so string `"1"` never
+matches number `1`); `-0` is normalized to `0`; `NaN` and `Infinity` are invalid
+and throw; object and array field values are serialized canonically with sorted
+keys, so key order inside a composite identity does not matter. Multiple fields
+form a composite identity in the configured order.
+
+**Ambiguity**: if the same identity occurs more than once on either side of the
+same array, the differ does not silently keep the last occurrence. It emits an
+`ambiguous-identity` diagnostic (via `onIdentityDiagnostic` and
+`differ.identityDiagnostics`) and falls back to the configured `arrayDiffMethod`
+for that array.
+
+**Output model**: every line that belongs to an identity-matched element carries
+an `identity` field with the normalized identity, the selector path, `oldIndex` /
+`newIndex`, and `moved` / `modified` flags. Unmatched elements are handed to the
+configured `arrayDiffMethod` (e.g. LCS), so a replaced element still shows up as
+a modification when possible.
+
+**Viewer**: pure moves (`moved && !modified`) get a `line-moved` class and the
+`bgColour.move` colour instead of edit styling, while move + modify keeps its
+`modify` styling; inline diff highlights and unchanged-line folding both
+understand move lines (pure moves are never folded away).
+
+**Complexity**: computing identities is `O(n)` in the number of elements (times
+the identity size), matching is `O(n)` via hash maps, and move detection uses an
+`O(n²)` longest-increasing-subsequence pass. The fallback for unmatched elements
+keeps the complexity of the configured `arrayDiffMethod`.
+
+**Compatibility**: the feature is opt-in. Without `arrayIdentitySelectors` (or
+when no selector matches an array), the output is byte-identical to previous
+versions.
+
 ## CLI Tool
 
 You can use the CLI tool to generate the diff data from two JSON files. Please install the package `terminal-kit` before using it.
