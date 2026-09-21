@@ -10,6 +10,7 @@ import getInlineSyntaxHighlight from './utils/get-inline-syntax-highlight';
 import getSegments from './utils/get-segments';
 import type { HiddenUnchangedLinesInfo, SegmentItem } from './utils/get-segments';
 import { isExpandLine, mergeSegments, type InlineRenderInfo } from './utils/segment-util';
+import { getLineIdentityClass, getLineIdentityView, rowHasIdentityChange } from './utils/identity/line-identity';
 
 interface ExpandLineRendererOptions {
   /**
@@ -115,6 +116,24 @@ export interface ViewerProps {
   texts?: {
     /** @default 'No change detected' */
     noChangeDetected?: string;
+    /**
+     * Gutter badge for an element that only moved, default `'⇄'`.
+     */
+    movedBadge?: string;
+    /**
+     * `title` tooltip of the move badge, default
+     * `'Moved element (identity matched)'`.
+     */
+    movedTitle?: string;
+    /**
+     * Gutter badge for an element that moved and was modified, default `'⇄*'`.
+     */
+    movedModifiedBadge?: string;
+    /**
+     * `title` tooltip of the move-and-modify badge, default
+     * `'Moved and modified element (identity matched)'`.
+     */
+    movedModifiedTitle?: string;
     /** @default '⭡ Show %d lines before', where %d is the number */
     showLinesBefore?: string;
     /** @default '⭣ Show %d lines after', where %d is the number */
@@ -132,6 +151,10 @@ const DEFAULT_INDENT = 2;
 const DEFAULT_EXPAND_MORE_LINES_LIMIT = 20;
 const DEFAULT_TEXTS = {
   noChangeDetected: 'No change detected',
+  movedBadge: '⇄',
+  movedTitle: 'Moved element (identity matched)',
+  movedModifiedBadge: '⇄*',
+  movedModifiedTitle: 'Moved and modified element (identity matched)',
   showLinesBefore: '⭡ Show %d lines before',
   showLinesAfter: '⭣ Show %d lines after',
   showAll: '⭥ Show all unchanged lines',
@@ -142,8 +165,11 @@ const Viewer: React.FC<ViewerProps> = props => {
   const jsonsAreEqual = React.useMemo(() => {
     return (
       linesLeft.length === linesRight.length &&
-      linesLeft.every(item => item.type === 'equal') &&
-      linesRight.every(item => item.type === 'equal')
+      linesLeft.every((item, index) => (
+        item.type === 'equal' &&
+        linesRight[index].type === 'equal' &&
+        !rowHasIdentityChange(item, linesRight[index])
+      ))
     );
   }, [linesLeft, linesRight]);
 
@@ -310,6 +336,18 @@ const Viewer: React.FC<ViewerProps> = props => {
   const renderLine = (index: number, syntaxHighlightEnabled: boolean) => {
     const l = linesLeftRef.current[index];
     const r = linesRightRef.current[index];
+    const previous = index > 0
+      ? { left: linesLeftRef.current[index - 1], right: linesRightRef.current[index - 1] }
+      : undefined;
+    const identityView = getLineIdentityView(l, r, previous);
+    const identityClass = getLineIdentityClass(identityView);
+    const moveBadge = identityView?.entityStart
+      ? (identityView.moveModified ? mergedTexts.movedModifiedBadge : mergedTexts.movedBadge)
+      : '';
+    const moveTitle = identityView?.entityStart
+      ? (identityView.moveModified ? mergedTexts.movedModifiedTitle : mergedTexts.movedTitle)
+      : '';
+    const dataEntity = identityView ? String(identityView.entityId) : undefined;
 
     const [lDiff, rDiff] = props.highlightInlineDiff && l.type === 'modify' && r.type === 'modify'
       ? getInlineDiff(l.text, r.text, inlineDiffOptions)
@@ -324,19 +362,32 @@ const Viewer: React.FC<ViewerProps> = props => {
 
     return (
       // eslint-disable-next-line react/no-array-index-key
-      <tr key={index}>
+      <tr
+        key={index}
+        className={identityView ? 'identity-row' : undefined}
+        data-entity={dataEntity}
+      >
         {
           props.lineNumbers && (
             <td
-              className={`line-${l.type} line-number`}
+              className={['line-number', `line-${l.type}`, identityClass].filter(Boolean).join(' ')}
               style={{ backgroundColor: bgLeft }}
+              data-entity={dataEntity}
             >
+              {moveBadge && <span className="move-badge" title={moveTitle}>{moveBadge}</span>}
               {l.lineNumber}
             </td>
           )
         }
-        <td className={`line-${l.type}`} style={{ backgroundColor: bgLeft }}>
+        <td
+          className={[`line-${l.type}`, identityClass].filter(Boolean).join(' ')}
+          style={{ backgroundColor: bgLeft }}
+          data-entity={dataEntity}
+        >
           <pre>
+            {!props.lineNumbers && moveBadge && (
+              <span className="move-badge move-badge-inline" title={moveTitle}>{moveBadge}</span>
+            )}
             {l.text && indentChar.repeat(l.level * indentSize)}
             {renderInlineResult(l.text, lResult, l.comma, syntaxHighlightEnabled)}
           </pre>
@@ -344,14 +395,19 @@ const Viewer: React.FC<ViewerProps> = props => {
         {
           props.lineNumbers && (
             <td
-              className={`line-${r.type} line-number`}
+              className={['line-number', `line-${r.type}`, identityClass].filter(Boolean).join(' ')}
               style={{ backgroundColor: bgRight }}
+              data-entity={dataEntity}
             >
               {r.lineNumber}
             </td>
           )
         }
-        <td className={`line-${r.type}`} style={{ backgroundColor: bgRight }}>
+        <td
+          className={[`line-${r.type}`, identityClass].filter(Boolean).join(' ')}
+          style={{ backgroundColor: bgRight }}
+          data-entity={dataEntity}
+        >
           <pre>
             {r.text && indentChar.repeat(r.level * indentSize)}
             {renderInlineResult(r.text, rResult, r.comma, syntaxHighlightEnabled)}

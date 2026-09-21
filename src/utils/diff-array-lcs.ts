@@ -1,4 +1,4 @@
-import type { DifferOptions, DiffResult } from '../differ';
+import type { DifferOptions, DiffResult, PathAwareArrayDiffFunc } from '../differ';
 import formatValue from './format-value';
 import diffObject from './diff-object';
 import getType from './get-type';
@@ -9,6 +9,7 @@ import shallowSimilarity from './shallow-similarity';
 import concat from './concat';
 import prettyAppendLines from './pretty-append-lines';
 import { addArrayClosingBrackets, addArrayOpeningBrackets, addMaxDepthPlaceholder } from './array-bracket-utils';
+import type { Path } from './identity/json-pointer';
 
 const lcs = (
   arrLeft: any[],
@@ -17,9 +18,42 @@ const lcs = (
   keyRight: string,
   level: number,
   options: DifferOptions,
+  recurse: PathAwareArrayDiffFunc,
+  pathLeft: Path,
+  pathRight: Path,
 ): [DiffResult[], DiffResult[]] => {
   const f = Array(arrLeft.length + 1).fill(0).map(() => Array(arrRight.length + 1).fill(0));
   const backtrack = Array(arrLeft.length + 1).fill(0).map(() => Array(arrRight.length + 1).fill(0));
+
+  const diffArrayItem = (leftIndex: number, rightIndex: number, itemLevel: number) => {
+    const itemPathLeft = [...pathLeft, { kind: 'index' as const, index: leftIndex }];
+    const itemPathRight = [...pathRight, { kind: 'index' as const, index: rightIndex }];
+    return recurse(
+      arrLeft[leftIndex],
+      arrRight[rightIndex],
+      keyLeft,
+      keyRight,
+      itemLevel,
+      options,
+      [],
+      [],
+      recurse,
+      itemPathLeft,
+      itemPathRight,
+    );
+  };
+
+  const diffObjectItem = (leftIndex: number, rightIndex: number) => {
+    return diffObject(
+      arrLeft[leftIndex],
+      arrRight[rightIndex],
+      level + 2,
+      options,
+      recurse,
+      [...pathLeft, { kind: 'index' as const, index: leftIndex }],
+      [...pathRight, { kind: 'index' as const, index: rightIndex }],
+    );
+  };
 
   for (let i = 1; i <= arrLeft.length; i++) {
     backtrack[i][0] = 'up';
@@ -94,11 +128,11 @@ const lcs = (
         tLeft = concat(tLeft, reversedLeft.reverse(), true);
         tRight = concat(tRight, reversedRight.reverse(), true);
       } else if (type === 'array') {
-        const [l, r] = diffArrayLCS(arrLeft[i - 1], arrRight[j - 1], keyLeft, keyRight, level + 1, options);
+        const [l, r] = diffArrayItem(i - 1, j - 1, level + 1);
         tLeft = concat(tLeft, l.reverse(), true);
         tRight = concat(tRight, r.reverse(), true);
       } else if (type === 'object') {
-        const [l, r] = diffObject(arrLeft[i - 1], arrRight[j - 1], level + 2, options, diffArrayLCS);
+        const [l, r] = diffObjectItem(i - 1, j - 1);
         tLeft.unshift({ level: level + 1, type: 'equal', text: '}' });
         tRight.unshift({ level: level + 1, type: 'equal', text: '}' });
         tLeft = concat(tLeft, l.reverse(), true);
@@ -129,11 +163,11 @@ const lcs = (
         const typeRight = getType(arrRight[j - 1]);
         if (typeLeft === typeRight) {
           if (typeLeft === 'array') {
-            const [l, r] = diffArrayLCS(arrLeft[i - 1], arrRight[j - 1], keyLeft, keyRight, level + 1, options);
+            const [l, r] = diffArrayItem(i - 1, j - 1, level + 1);
             tLeft = concat(tLeft, l.reverse(), true);
             tRight = concat(tRight, r.reverse(), true);
           } else if (typeLeft === 'object') {
-            const [l, r] = diffObject(arrLeft[i - 1], arrRight[j - 1], level + 2, options, diffArrayLCS);
+            const [l, r] = diffObjectItem(i - 1, j - 1);
             tLeft.unshift({ level: level + 1, type: 'equal', text: '}' });
             tRight.unshift({ level: level + 1, type: 'equal', text: '}' });
             tLeft = concat(tLeft, l.reverse(), true);
@@ -208,18 +242,31 @@ const diffArrayLCS = (
   options: DifferOptions,
   linesLeft: DiffResult[] = [],
   linesRight: DiffResult[] = [],
+  recurse: PathAwareArrayDiffFunc = diffArrayLCS as PathAwareArrayDiffFunc,
+  pathLeft: Path = [],
+  pathRight: Path = [],
 ): [DiffResult[], DiffResult[]] => {
-  addArrayOpeningBrackets(linesLeft, linesRight, keyLeft, keyRight, level)
+  addArrayOpeningBrackets(linesLeft, linesRight, keyLeft, keyRight, level);
 
   if (level >= (options.maxDepth || Infinity)) {
     addMaxDepthPlaceholder(linesLeft, linesRight, level);
   } else {
-    const [tLeftReverse, tRightReverse] = lcs(arrLeft, arrRight, keyLeft, keyRight, level, options);
+    const [tLeftReverse, tRightReverse] = lcs(
+      arrLeft,
+      arrRight,
+      keyLeft,
+      keyRight,
+      level,
+      options,
+      recurse,
+      pathLeft,
+      pathRight,
+    );
     linesLeft = concat(linesLeft, tLeftReverse);
     linesRight = concat(linesRight, tRightReverse);
   }
 
-  addArrayClosingBrackets(linesLeft, linesRight, level)
+  addArrayClosingBrackets(linesLeft, linesRight, level);
   return [linesLeft, linesRight];
 };
 

@@ -2,6 +2,7 @@ import type { DiffResult, DifferOptions } from '../differ';
 import prettyAppendLines from './pretty-append-lines';
 import diffObject from './diff-object';
 import concat from './concat';
+import type { Path } from './identity/json-pointer';
 
 /**
  * Diffs two objects, using compare-key logic for nested arrays if possible.
@@ -29,6 +30,9 @@ export function diffObjectWithArraySupport(
     options: DifferOptions,
     linesLeft?: DiffResult[],
     linesRight?: DiffResult[],
+    recurse?: any,
+    pathLeft?: Path,
+    pathRight?: Path,
   ) => [DiffResult[], DiffResult[]],
   compareKeyArrayDiff: (
     arrLeft: any[],
@@ -39,8 +43,13 @@ export function diffObjectWithArraySupport(
     options: DifferOptions,
     linesLeft?: DiffResult[],
     linesRight?: DiffResult[],
+    recurse?: any,
+    pathLeft?: Path,
+    pathRight?: Path,
   ) => [DiffResult[], DiffResult[]],
-  allObjectsHaveCompareKey: (arr: any[], compareKey: string) => boolean
+  allObjectsHaveCompareKey: (arr: any[], compareKey: string) => boolean,
+  pathLeft: Path = [],
+  pathRight: Path = [],
 ): [DiffResult[], DiffResult[]] {
   let linesLeft: DiffResult[] = [];
   let linesRight: DiffResult[] = [];
@@ -51,13 +60,27 @@ export function diffObjectWithArraySupport(
   for (const key of keys) {
     const lVal = leftObj ? leftObj[key] : undefined;
     const rVal = rightObj ? rightObj[key] : undefined;
+    const nextPathLeft = [...pathLeft, { kind: 'key' as const, key }];
+    const nextPathRight = [...pathRight, { kind: 'key' as const, key }];
     if (Array.isArray(lVal) && Array.isArray(rVal) && options.compareKey) {
       if (
         allObjectsHaveCompareKey(lVal, options.compareKey) &&
         allObjectsHaveCompareKey(rVal, options.compareKey)
       ) {
         // Use compare-key diff for this property
-        const [arrL, arrR] = compareKeyArrayDiff(lVal, rVal, '', '', level + 2, options, [], []);
+        const [arrL, arrR] = compareKeyArrayDiff(
+          lVal,
+          rVal,
+          key,
+          key,
+          level + 2,
+          options,
+          [],
+          [],
+          fallbackArrayDiff,
+          nextPathLeft,
+          nextPathRight,
+        );
         linesLeft = concat(linesLeft, arrL);
         linesRight = concat(linesRight, arrR);
         continue;
@@ -65,7 +88,19 @@ export function diffObjectWithArraySupport(
     }
     if (Array.isArray(lVal) && Array.isArray(rVal)) {
       // Fallback to normal diff for arrays
-      const [arrL, arrR] = fallbackArrayDiff(lVal, rVal, '', '', level + 2, options, [], []);
+      const [arrL, arrR] = fallbackArrayDiff(
+        lVal,
+        rVal,
+        key,
+        key,
+        level + 2,
+        options,
+        [],
+        [],
+        fallbackArrayDiff,
+        nextPathLeft,
+        nextPathRight,
+      );
       linesLeft = concat(linesLeft, arrL);
       linesRight = concat(linesRight, arrR);
     } else if (Array.isArray(lVal) || Array.isArray(rVal)) {
@@ -87,11 +122,13 @@ export function diffObjectWithArraySupport(
         { [key]: rVal },
         level + 2,
         options,
-        fallbackArrayDiff
+        fallbackArrayDiff,
+        nextPathLeft,
+        nextPathRight,
       );
       linesLeft = concat(linesLeft, leftLines);
       linesRight = concat(linesRight, rightLines);
     }
   }
   return [linesLeft, linesRight];
-} 
+}

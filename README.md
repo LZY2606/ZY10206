@@ -106,6 +106,120 @@ The result is here:
 
 Here is an experimental [Vue version](https://github.com/RexSkz/json-diff-kit-vue) of the `Viewer` component.
 
+## Object Array Identity Matching
+
+By default arrays are compared by position (`"normal"`) or by LCS content
+alignment (`"lcs"`). When an array holds objects with a stable business key,
+you can configure **identity selectors** so that the differ follows an
+element across moves, recursively compares it in place, and only hands the
+unmatched elements to the regular array strategy:
+
+```ts
+const differ = new Differ({
+  arrayDiffMethod: 'lcs',
+  arrayIdentitySelectors: [
+    // the top level array is identified by its "id" field
+    { arrayPath: '', fields: '/id' },
+    // every "tags" array nested inside a root element uses a composite identity
+    { arrayPath: '/*/tags', fields: ['/kind', '/code'] },
+  ],
+});
+
+const [beforeLines, afterLines, diagnostics] = differ.diffWithDiagnostics(before, after);
+```
+
+### Selector paths and fields
+
+- `arrayPath` is a [JSON Pointer](https://datatracker.ietf.org/doc/html/rfc6901)
+  style path of the target array. `''` denotes the top level array, `"/users"`
+  the array at property `users`, and `"/users/*/roles"` the `roles` array of
+  every element of `users`. The restricted wildcard `*` matches a single
+  array element position; it cannot be an object key and cannot be the final
+  token (it has to point at an array). Escapes `~0`/`~1` are supported.
+- `fields` are JSON Pointer tokens relative to the element object, e.g.
+  `"/id"` or `["/kind", "/meta/name"]` for a composite identity. A selector
+  only **reads existing fields** (or combinations of them); it never executes
+  arbitrary code. Selectors with overlapping target paths are rejected when
+  the `Differ` is constructed.
+
+### Normalized identity values
+
+Each declared component is normalized into a canonical key, and two elements
+match only when their composite keys are byte-for-byte identical:
+
+- a **missing** field, an explicit **`null`**, and an existing scalar are all
+  distinct;
+- strings and numbers never compare equal (`"1"` ≠ `1`), and booleans are
+  distinct as well;
+- `-0` and `0` are treated as the same identity;
+- `NaN`, `±Infinity`, objects, arrays, functions and other non-JSON values are
+  **illegal** identity components: the element gets an
+  `invalid-identity-value` diagnostic and is routed to the fallback strategy;
+- composite identities are independent of the field declaration order (the
+  components are sorted by field path).
+
+### Duplicate identities and diagnostics
+
+The differ never performs "last one wins" overwriting. If the same identity
+key occurs more than once on either side of an array, every involved element
+is excluded from identity matching and rendered through the configured
+`arrayDiffMethod`. A `duplicate-identity` diagnostic records the key, the side
+and all involved indices. Set `onDuplicate: 'throw'` on a selector to abort
+the whole diff instead:
+
+```ts
+new Differ({
+  arrayIdentitySelectors: [{ arrayPath: '', fields: '/id', onDuplicate: 'throw' }],
+});
+```
+
+`Differ#diff` keeps its historical `[before, after]` return type; use
+`Differ#diffWithDiagnostics` for the typed `[before, after, diagnostics]`
+tuple.
+
+### Output model
+
+Every line belonging to an identity-matched element carries an `identity`
+object:
+
+```ts
+interface DiffResultIdentity {
+  entityId: number;                 // stable within one diff run
+  basis: 'identity';
+  oldIndex: number;                 // index in the old array
+  newIndex: number;                 // index in the new array
+  moved: boolean;                   // position changed
+  modified: boolean;                // recursive content changed
+  matchedBy: { arrayPath: string; fields: string[]; identityKey: string };
+}
+```
+
+A moved-then-modified element is therefore rendered as **one linked entity**
+(moved `&&` modified) instead of a remove plus an add. The `Viewer` consumes
+this metadata directly: pure moves are tinted with a `line-move` class and a
+`⇄` gutter badge, moved-and-modified rows use `line-move-modified` with a
+`⇄*` badge, inline diffs still highlight the internal change, and pure moves
+participate in the unchanged-lines folding context instead of being hidden.
+Custom renderers can use the exported `getLineIdentityView` /
+`getLineIdentityClass` helpers.
+
+### Complexity and compatibility
+
+- Identity extraction is linear in the element field count. Pairing is
+  `O(n + m)` per array; the paired elements are emitted in original (before)
+  index order so the left column stays strictly line-number monotonic, and
+  unmatched runs go through the selected strategy (`"normal"` is `O(LEN)`,
+  `"lcs"` is `O(LEN²)`).
+- Identity matching only activates for the configured arrays; elements that
+  are not objects, lack a usable identity, are ambiguous, or are illegal fall
+  back to `arrayDiffMethod`. Inside fallback runs a concrete numeric array
+  index in a selector path refers to the compacted fallback slice; wildcard
+  selectors are recommended for nested arrays.
+- When no `arrayIdentitySelectors` option is supplied (or it is empty), the
+  dispatcher is not installed at all and the output is byte-for-byte identical
+  to previous versions; no new fields appear on `DiffResult`, and the
+  `compare-key` / `unorder-*` modes keep their existing behavior.
+
 ## More Complex Usages
 
 Please check the [playground page](https://json-diff-kit.js.org/), where you can adjust nearly all parameters and see the result.
@@ -148,6 +262,7 @@ Please refer to the article [JSON Diff Kit: A Combination of Several Simple Algo
 - [x] Optimise `Viewer` performance by adding virtual scrolling
 - [x] Add CLI tool
 - [x] Provide a Vue version of `Viewer`
+- [x] Match object array elements by declarative identity selectors (moves vs. content changes)
 - [ ] Improve unit tests
 
 ## License

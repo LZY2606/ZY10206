@@ -16,4 +16,28 @@ export type {
   ViewerProps,
 } from './viewer';
 
+export type {
+  ArrayIdentitySelectorConfig,
+  CompiledSelector,
+  DuplicateIdentityStrategy,
+} from './utils/identity/selector';
+
+export type {
+  DiffResultIdentity,
+  IdentityDiagnostic,
+  IdentityDiagnosticCode,
+} from './utils/identity/types';
+
+export type {
+  Path,
+  PathStep,
+} from './utils/identity/json-pointer';
+
+export {
+  getLineIdentityView,
+  getLineIdentityClass,
+  rowHasIdentityChange,
+  type LineIdentityView,
+} from './utils/identity/line-identity';
+
 export { Differ, Viewer };

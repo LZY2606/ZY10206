@@ -1,5 +1,6 @@
 import type { DiffResult } from '../differ';
 import type { HideUnchangedLinesOptions } from '../viewer';
+import { rowHasIdentityChange } from './identity/line-identity';
 
 const defaultOptions = {
   threshold: 8,
@@ -24,7 +25,7 @@ const getSegments = (l: DiffResult[], r: DiffResult[], options: HideUnchangedLin
 
   const segments: SegmentItem[] = [];
   for (let i = 0; i < l.length; i++) {
-    if (l[i].type === 'equal' && r[i].type === 'equal') {
+    if (l[i].type === 'equal' && r[i].type === 'equal' && !rowHasIdentityChange(l[i], r[i])) {
       if (segments.length && segments[segments.length - 1].isEqual) {
         segments[segments.length - 1].end++;
       } else {

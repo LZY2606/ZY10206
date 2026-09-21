@@ -1,4 +1,4 @@
-import type { DiffResult, DifferOptions } from '../differ';
+import type { DiffResult, DifferOptions, PathAwareArrayDiffFunc } from '../differ';
 
 import concat from './concat';
 import formatValue from './format-value';
@@ -10,6 +10,7 @@ import cmp from './cmp';
 import { addArrayClosingBrackets, addArrayOpeningBrackets, addMaxDepthPlaceholder } from './array-bracket-utils';
 import diffArrayCompareKey, { allObjectsHaveCompareKey } from './diff-array-compare-key';
 import { diffObjectWithArraySupport } from './diff-object-with-array-support';
+import type { Path } from './identity/json-pointer';
 
 const diffArrayNormal = (
   arrLeft: any[],
@@ -20,14 +21,18 @@ const diffArrayNormal = (
   options: DifferOptions,
   linesLeft: DiffResult[] = [],
   linesRight: DiffResult[] = [],
+  recurse: PathAwareArrayDiffFunc = diffArrayNormal as PathAwareArrayDiffFunc,
+  pathLeft: Path = [],
+  pathRight: Path = [],
 ): [DiffResult[], DiffResult[]] => {
   arrLeft = [...arrLeft];
   arrRight = [...arrRight];
-  addArrayOpeningBrackets(linesLeft, linesRight, keyLeft, keyRight, level)
+  addArrayOpeningBrackets(linesLeft, linesRight, keyLeft, keyRight, level);
 
   if (level >= (options.maxDepth || Infinity)) {
     addMaxDepthPlaceholder(linesLeft, linesRight, level);
   } else {
+    let itemIndex = 0;
     while (arrLeft.length || arrRight.length) {
       const itemLeft = arrLeft[0];
       const itemRight = arrRight[0];
@@ -70,9 +75,9 @@ const diffArrayNormal = (
               itemRight,
               level,
               options,
-              diffArrayNormal,
+              recurse,
               diffArrayCompareKey,
-              allObjectsHaveCompareKey
+              allObjectsHaveCompareKey,
             );
           } else {
             [objLeft, objRight] = diffObject(
@@ -80,7 +85,9 @@ const diffArrayNormal = (
               itemRight,
               level + 2,
               options,
-              diffArrayNormal
+              recurse,
+              [...pathLeft, { kind: 'index', index: itemIndex }],
+              [...pathRight, { kind: 'index', index: itemIndex }],
             );
           }
           linesLeft = concat(linesLeft, objLeft);
@@ -98,7 +105,19 @@ const diffArrayNormal = (
             linesLeft = concat(linesLeft, resLeft);
             linesRight = concat(linesRight, resRight);
           } else {
-            const [resLeft, resRight] = diffArrayNormal(itemLeft, itemRight, '', '', level + 1, options, [], []);
+            const [resLeft, resRight] = recurse(
+              itemLeft,
+              itemRight,
+              '',
+              '',
+              level + 1,
+              options,
+              [],
+              [],
+              recurse,
+              [...pathLeft, { kind: 'index', index: itemIndex }],
+              [...pathRight, { kind: 'index', index: itemIndex }],
+            );
             linesLeft = concat(linesLeft, resLeft);
             linesRight = concat(linesRight, resRight);
           }
@@ -142,6 +161,7 @@ const diffArrayNormal = (
         }
         arrLeft.shift();
         arrRight.shift();
+        itemIndex++;
       } else if (arrLeft.length) {
         const removedLines = formatValue(itemLeft, undefined, true, options.undefinedBehavior).split('\n');
         for (let i = 0; i < removedLines.length; i++) {
@@ -153,6 +173,7 @@ const diffArrayNormal = (
           linesRight.push({ level: level + 1, type: 'equal', text: '' });
         }
         arrLeft.shift();
+        itemIndex++;
       } else if (arrRight.length) {
         const addedLines = formatValue(itemRight, undefined, true, options.undefinedBehavior).split('\n');
         for (let i = 0; i < addedLines.length; i++) {
@@ -164,11 +185,12 @@ const diffArrayNormal = (
           });
         }
         arrRight.shift();
+        itemIndex++;
       }
     }
   }
 
-  addArrayClosingBrackets(linesLeft, linesRight, level)
+  addArrayClosingBrackets(linesLeft, linesRight, level);
   return [linesLeft, linesRight];
 };
 

@@ -5,6 +5,7 @@ import getType from './get-type';
 import prettyAppendLines from './pretty-append-lines';
 import sortKeys from './sort-keys';
 import stringify from './stringify';
+import type { Path } from './identity/json-pointer';
 
 const diffObject = (
   lhs: Record<string, any>,
@@ -12,6 +13,8 @@ const diffObject = (
   level = 1,
   options: DifferOptions,
   arrayDiffFunc: ArrayDiffFunc,
+  pathLeft: Path = [],
+  pathRight: Path = [],
 ): [DiffResult[], DiffResult[]] => {
   if (level > (options.maxDepth || Infinity)) {
     return [
@@ -101,7 +104,21 @@ const diffObject = (
       } else if (Array.isArray(lhs[keyLeft])) {
         const arrLeft = [...lhs[keyLeft]];
         const arrRight = [...rhs[keyRight]];
-        const [resLeft, resRight] = arrayDiffFunc(arrLeft, arrRight, keyLeft, keyRight, level, options, [], []);
+        const nextPathLeft = [...pathLeft, { kind: 'key', key: keyLeft }];
+        const nextPathRight = [...pathRight, { kind: 'key', key: keyRight }];
+        const [resLeft, resRight] = arrayDiffFunc(
+          arrLeft,
+          arrRight,
+          keyLeft,
+          keyRight,
+          level,
+          options,
+          [],
+          [],
+          arrayDiffFunc,
+          nextPathLeft,
+          nextPathRight,
+        );
         linesLeft = concat(linesLeft, resLeft);
         linesRight = concat(linesRight, resRight);
       } else if (lhs[keyLeft] === null) {
@@ -114,6 +131,8 @@ const diffObject = (
           level + 1,
           options,
           arrayDiffFunc,
+          [...pathLeft, { kind: 'key', key: keyLeft }],
+          [...pathRight, { kind: 'key', key: keyRight }],
         );
         linesLeft.push({ level, type: 'equal', text: `"${keyLeft}": {` });
         linesLeft = concat(linesLeft, result[0]);
